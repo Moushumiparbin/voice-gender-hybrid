@@ -14,10 +14,9 @@ st.write("Upload a WAV file and the model will predict Gender (Male/Female)")
 @st.cache_resource
 def load_model():
     return tf.keras.models.load_model(
-        "hybrid_model.h5",
+        "hybrid_model.keras",
         compile=False
     )
-
 model = load_model()
 
 # ================= FILE UPLOAD =================
