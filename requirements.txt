@@ -5,5 +5,6 @@ librosa==0.10.1
 soundfile
 pydub
 tensorflow==2.15.0
-scikit-learn==1.3.2
+scikit-learn
 joblib
+pandas
