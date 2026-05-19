@@ -9,20 +9,20 @@ CHUNK_DURATION = 3  # seconds
 
 
 # ================= FEATURE EXTRACTION (MATCH COLAB) =================
-def extract_features(y):
+def extract_features(y, sr):
 
-    mfcc = librosa.feature.mfcc(y=y, sr=SR, n_mfcc=N_MFCC)
+    mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=N_MFCC)
     delta = librosa.feature.delta(mfcc)
     delta2 = librosa.feature.delta(mfcc, order=2)
 
     features = np.vstack([mfcc, delta, delta2])  # (39, time)
 
-    # FIX LENGTH = 130
+    # padding/truncation EXACT same as colab
     if features.shape[1] < MAX_LEN:
         features = np.pad(
             features,
             ((0, 0), (0, MAX_LEN - features.shape[1])),
-            mode='constant'
+            mode="constant"
         )
     else:
         features = features[:, :MAX_LEN]
@@ -30,10 +30,11 @@ def extract_features(y):
     return features
 
 
-# ================= AUDIO CHUNKING (MATCH COLAB STYLE) =================
+# ================= CHUNK AUDIO =================
 def chunk_audio(file_path):
 
     y, sr = librosa.load(file_path, sr=SR)
+
     chunk_size = SR * CHUNK_DURATION
 
     chunks = []
@@ -41,31 +42,32 @@ def chunk_audio(file_path):
     for i in range(0, len(y), chunk_size):
         chunk = y[i:i + chunk_size]
 
-        # same logic as your Colab (silence filter)
+        # same silence logic as your training
         if len(chunk) < SR:
             continue
 
         if np.max(np.abs(chunk)) < 0.01:
             continue
 
-        chunks.append(chunk)
+        chunks.append((chunk, sr))
 
     return chunks
 
 
-# ================= PREDICTION =================
+# ================= PREDICT =================
 def predict_audio(file_path, model):
 
     chunks = chunk_audio(file_path)
     results = []
 
-    for chunk in chunks:
+    for chunk, sr in chunks:
 
-        features = extract_features(chunk)
+        features = extract_features(chunk, sr)
 
-        # (39,130) → (130,39)
-        features = np.transpose(features, (1, 0))
-        features = features[np.newaxis, ...]
+        # MATCH COLAB HYBRID FORMAT (130, 39)
+        features = np.transpose(features, (1, 0))  # (130, 39)
+
+        features = np.expand_dims(features, axis=0)  # (1,130,39)
 
         pred = model.predict(features, verbose=0)
 
