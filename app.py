@@ -15,7 +15,8 @@ st.write("Upload a WAV file and the model will predict Gender (Male/Female)")
 def load_model():
     return tf.keras.models.load_model(
         "hybrid_model.keras",
-        compile=False
+        compile=False,
+        safe_mode=False
     )
 model = load_model()
 
