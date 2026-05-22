@@ -88,7 +88,7 @@ def predict(file_path, threshold=0.5):
 
         prob = model.predict(feat, verbose=0)[0][0]
 
-        label = "MALE" if prob > threshold else "FEMALE"
+        label = "FEMALE" if prob > threshold else "MALE"
         predictions.append(label)
 
     if len(predictions) == 0:
