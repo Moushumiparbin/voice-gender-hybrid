@@ -1,3 +1,4 @@
+```python id="7l4y4o"
 import os
 os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
 
@@ -20,7 +21,8 @@ SR = 16000
 MAX_LEN = 130
 EPS = 1e-8
 
-MODEL_PATH = "gender_model.h5"
+# IMPORTANT
+MODEL_PATH = "gender.weights.h5"
 
 # =========================
 # FEATURE EXTRACTION
@@ -45,42 +47,98 @@ def extract_features(file_path):
         order=2
     )
 
-    # Combine -> 39 features
-    features = np.vstack([mfcc, delta, delta2])
+    # Combine → 39 features
+    features = np.vstack([
+        mfcc,
+        delta,
+        delta2
+    ])
 
     # Padding / trimming
     if features.shape[1] < MAX_LEN:
+
         pad = MAX_LEN - features.shape[1]
+
         features = np.pad(
             features,
-            ((0, 0), (0, pad))
+            ((0,0),(0,pad))
         )
+
     else:
+
         features = features[:, :MAX_LEN]
 
     # Normalization
     features = (
-        features - np.mean(features, axis=1, keepdims=True)
+        features -
+        np.mean(features, axis=1, keepdims=True)
     ) / (
-        np.std(features, axis=1, keepdims=True) + EPS
+        np.std(features, axis=1, keepdims=True)
+        + EPS
     )
 
     return features.astype(np.float32)
 
 # =========================
-# LOAD MODEL
+# LOAD MODEL SAFELY
 # =========================
 @st.cache_resource
 def load_model_safe():
 
-    model = tf.keras.models.load_model(
-        MODEL_PATH,
-        compile=False
-    )
+    model = tf.keras.Sequential([
+
+        tf.keras.layers.Input(shape=(39,130,1)),
+
+        tf.keras.layers.Conv2D(
+            32,
+            (3,3),
+            padding="same",
+            activation="relu"
+        ),
+        tf.keras.layers.BatchNormalization(),
+        tf.keras.layers.MaxPooling2D((2,2)),
+
+        tf.keras.layers.Conv2D(
+            64,
+            (3,3),
+            padding="same",
+            activation="relu"
+        ),
+        tf.keras.layers.BatchNormalization(),
+        tf.keras.layers.MaxPooling2D((2,2)),
+
+        tf.keras.layers.Conv2D(
+            128,
+            (3,3),
+            padding="same",
+            activation="relu"
+        ),
+        tf.keras.layers.BatchNormalization(),
+
+        tf.keras.layers.GlobalAveragePooling2D(),
+
+        tf.keras.layers.Dense(
+            128,
+            activation="relu"
+        ),
+
+        tf.keras.layers.Dropout(0.4),
+
+        tf.keras.layers.Dense(
+            1,
+            activation="sigmoid"
+        )
+    ])
+
+    # Build model
+    model.build((None,39,130,1))
+
+    # Load weights
+    model.load_weights(MODEL_PATH)
 
     return model
 
-# 🔥 IMPORTANT
+# LOAD MODEL
 model = load_model_safe()
 
 # =========================
@@ -92,7 +150,10 @@ st.set_page_config(
 )
 
 st.title("🎤 Voice Gender Classification")
-st.write("Upload a WAV audio file")
+
+st.write(
+    "Upload a WAV audio file"
+)
 
 uploaded_file = st.file_uploader(
     "Upload Audio",
@@ -108,7 +169,7 @@ def predict(file_path, threshold=0.5):
 
     predictions = []
 
-    # Process in 3-second chunks
+    # Process audio in 3 sec chunks
     for i in range(0, len(audio), 3000):
 
         chunk = audio[i:i+3000]
@@ -120,7 +181,7 @@ def predict(file_path, threshold=0.5):
         ):
             continue
 
-        # Temporary chunk file
+        # Save temp chunk
         temp_file = "temp.wav"
 
         chunk.export(
@@ -134,13 +195,13 @@ def predict(file_path, threshold=0.5):
         # CNN input shape
         feat = feat[np.newaxis, ..., np.newaxis]
 
-        # Prediction
+        # Predict
         prob = model.predict(
             feat,
             verbose=0
         )[0][0]
 
-        # Label
+        # Convert to label
         label = (
             "MALE"
             if prob > threshold
@@ -149,7 +210,7 @@ def predict(file_path, threshold=0.5):
 
         predictions.append(label)
 
-    # No speech found
+    # No speech
     if len(predictions) == 0:
         return None, 0
 
@@ -172,7 +233,7 @@ if uploaded_file is not None:
 
     file_path = "temp_uploaded.wav"
 
-    # Save uploaded file
+    # Save uploaded audio
     with open(file_path, "wb") as f:
         f.write(uploaded_file.read())
 
@@ -180,14 +241,16 @@ if uploaded_file is not None:
 
     if st.button("Predict Gender"):
 
-        with st.spinner("Analyzing audio..."):
+        with st.spinner(
+            "Analyzing audio..."
+        ):
 
             label, conf = predict(file_path)
 
         if label is None:
 
             st.warning(
-                "No speech detected in audio"
+                "No speech detected"
             )
 
         else:
@@ -199,3 +262,4 @@ if uploaded_file is not None:
             st.info(
                 f"📊 Confidence: {conf:.3f}"
             )
+```
