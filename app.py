@@ -48,7 +48,7 @@ MODEL_PATH = "cnn_gender_model_FIXED.keras"
 
 
 model = tf.keras.models.load_model(
-    "cnn_gender_model_STREAMLIT_SAFE.keras",
+    "cnn_gender_model_FIXED.keras",
     compile=False
 )
 # =========================
