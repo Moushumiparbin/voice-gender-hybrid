@@ -18,7 +18,8 @@ SR = 16000
 MAX_LEN = 130
 EPS = 1e-8
 
-MODEL_PATH = "gender_model.h5"
+# 🔥 CHANGED HERE (IMPORTANT)
+MODEL_PATH = "gender_model.keras"
 
 # =========================
 # FEATURE EXTRACTION
