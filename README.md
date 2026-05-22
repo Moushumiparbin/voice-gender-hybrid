@@ -1,47 +1,33 @@
-# 🎤 Assamese Speech Gender Classification using Deep Learning
+# 🎤 Voice Gender Classification using CNN
 
-This project is a **Speech Processing + Deep Learning system** that classifies the gender (Male/Female) of a speaker from Assamese speech audio using MFCC-based feature extraction and a Hybrid CNN-LSTM model.
-
-The system is deployed using **Streamlit Community Cloud** for real-time inference.
+This project classifies **male vs female voice** using a CNN model trained on MFCC features.
 
 ---
 
-## 🚀 Live Demo
-If deployed:
-👉 https://your-streamlit-app-link.streamlit.app/
+## 🚀 Features
+- CNN-based deep learning model
+- MFCC + Delta + Delta-Delta features
+- Streamlit web app
+- Real-time audio prediction
 
 ---
 
-## 📌 Project Overview
-
-The goal of this project is to build an **automatic gender classification system** from speech signals.
-
-We compare three deep learning architectures:
-- Convolutional Neural Network (CNN)
-- Long Short-Term Memory (LSTM)
-- Hybrid CNN + LSTM (Best Model)
+## 📊 Model Performance
+- CNN Accuracy: **99.06%**
+- LSTM Accuracy: **96.5%**
 
 ---
 
-## 📊 Dataset
-
-- Language: Assamese
-- Audio format: `.wav`
-- Speaker-based dataset
-- Each speaker labeled with:
-  - Gender (Male/Female)
-  - Age
+## 🧠 How it works
+1. Audio is split into chunks
+2. MFCC features extracted
+3. CNN predicts each chunk
+4. Majority voting gives final result
 
 ---
 
-## 🎯 Feature Extraction
+## ▶️ Run locally
 
-We extract **39-dimensional MFCC features**:
-
-- 13 MFCC coefficients
-- 13 Delta MFCC
-- 13 Delta-Delta MFCC
-
-Each audio is segmented into **3-second chunks**, and features are padded/truncated to fixed length.
-
-Final input shape:
+```bash
+pip install -r requirements.txt
+streamlit run app.py
