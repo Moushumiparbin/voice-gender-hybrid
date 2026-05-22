@@ -1,9 +1,10 @@
 streamlit
-tensorflow==2.14.0
-keras==2.14.0
+tensorflow==2.15.0
+keras==2.15.0
 librosa
 numpy
 pydub
 scikit-learn
 matplotlib
 soundfile
+ffmpeg-python
