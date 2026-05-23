@@ -6,6 +6,7 @@ import numpy as np
 import tensorflow as tf
 from pydub import AudioSegment
 import librosa
+from collections import Counter
 
 # =========================
 # CONFIG
@@ -27,7 +28,7 @@ def load_model():
 model = load_model()
 
 # =========================
-# FEATURE EXTRACTION (SAME AS COLAB)
+# FEATURE EXTRACTION (EXACT COLAB MATCH)
 # =========================
 def extract_features(file_path):
 
@@ -39,20 +40,22 @@ def extract_features(file_path):
 
     features = np.vstack([mfcc, delta, delta2])  # (39, T)
 
-    # pad / trim
+    # FIX TIME AXIS
     if features.shape[1] < MAX_LEN:
         pad = MAX_LEN - features.shape[1]
         features = np.pad(features, ((0,0),(0,pad)))
     else:
         features = features[:, :MAX_LEN]
 
-    # normalization (same as training)
-    features = features / (np.max(np.abs(features), axis=1, keepdims=True) + EPS)
+    # EXACT TRAINING NORMALIZATION
+    features = (features - np.mean(features, axis=1, keepdims=True)) / (
+        np.std(features, axis=1, keepdims=True) + EPS
+    )
 
     return features.astype(np.float32)
 
 # =========================
-# CLEAN PREDICTION (FIXED LOGIC)
+# PREDICTION (PRODUCTION FIX)
 # =========================
 def predict(file_path):
 
@@ -60,24 +63,22 @@ def predict(file_path):
 
     probs = []
 
-    # IMPORTANT: keep SAME chunk size as training
     for i in range(0, len(audio), 3000):
 
         chunk = audio[i:i+3000]
 
-        # skip silence
+        # silence removal
         if chunk.dBFS == float("-inf") or chunk.dBFS < -55:
             continue
 
         chunk.export("temp.wav", format="wav")
 
         feat = extract_features("temp.wav")
-
         feat = feat[np.newaxis, ..., np.newaxis]
 
         prob = float(model.predict(feat, verbose=0)[0][0])
 
-        # DEBUG VIEW (optional)
+        # DEBUG (important)
         st.write("Chunk prob:", prob)
 
         probs.append(prob)
@@ -86,24 +87,30 @@ def predict(file_path):
         return None, 0
 
     # =========================
-    # STABLE AGGREGATION
+    # STABLE AGGREGATION (FIXED)
     # =========================
+
     probs = np.array(probs)
 
-    avg_prob = np.median(probs)   # IMPORTANT: median is more stable than mean
+    # IMPORTANT: use trimmed mean (removes noise better than mean/median)
+    probs = np.sort(probs)
+    trimmed = probs[int(0.1*len(probs)) : int(0.9*len(probs))]
 
+    avg_prob = np.mean(trimmed) if len(trimmed) > 0 else np.mean(probs)
+
+    # label
     label = "MALE" if avg_prob > 0.5 else "FEMALE"
 
-    # confidence = distance from 0.5 (fixes fake 0.5 confidence)
+    # confidence (distance from decision boundary)
     confidence = abs(avg_prob - 0.5) * 2
-    confidence = min(max(confidence, 0), 1)
+    confidence = float(np.clip(confidence, 0, 1))
 
     return label, confidence
 
 # =========================
 # STREAMLIT UI
 # =========================
-st.title("🎤 Voice Gender Classification (CNN - FIXED)")
+st.title("🎤 Voice Gender Classification (CNN - Production Fixed)")
 
 uploaded_file = st.file_uploader("Upload WAV file", type=["wav"])
 
@@ -119,7 +126,7 @@ if uploaded_file is not None:
         label, conf = predict("temp_uploaded.wav")
 
         if label is None:
-            st.warning("No speech detected")
+            st.warning("No speech detected in audio")
         else:
             st.success(f"Prediction: {label}")
             st.info(f"Confidence: {conf:.3f}")
