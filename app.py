@@ -20,7 +20,7 @@ EPS = 1e-8
 MODEL_PATH = "cnn_gender_model.keras"
 
 # =========================
-# LOAD MODEL (TF 2.16 SAFE)
+# LOAD MODEL
 # =========================
 @st.cache_resource
 def load_model_safe():
@@ -41,12 +41,14 @@ def extract_features(file_path):
 
     features = np.vstack([mfcc, delta, delta2])
 
+    # pad / truncate to fixed length
     if features.shape[1] < MAX_LEN:
         pad = MAX_LEN - features.shape[1]
         features = np.pad(features, ((0,0),(0,pad)))
     else:
         features = features[:, :MAX_LEN]
 
+    # normalization
     features = (features - np.mean(features, axis=1, keepdims=True)) / (
         np.std(features, axis=1, keepdims=True) + EPS
     )
@@ -54,14 +56,7 @@ def extract_features(file_path):
     return features.astype(np.float32)
 
 # =========================
-# CALIBRATION (VERY IMPORTANT)
-# fixes sigmoid overconfidence bias
-# =========================
-def calibrate(p):
-    return (p - 0.5) * 0.8 + 0.5
-
-# =========================
-# PREDICTION
+# PREDICTION FUNCTION
 # =========================
 def predict(file_path):
 
@@ -73,7 +68,7 @@ def predict(file_path):
 
         chunk = audio[i:i+3000]
 
-        # relaxed silence filter (IMPORTANT FIX)
+        # relaxed silence filtering
         if chunk.dBFS == float("-inf") or chunk.dBFS < -60:
             continue
 
@@ -83,9 +78,6 @@ def predict(file_path):
         feat = feat[np.newaxis, ..., np.newaxis]
 
         prob = float(model.predict(feat, verbose=0)[0][0])
-
-        # APPLY CALIBRATION
-        prob = calibrate(prob)
 
         probs.append(prob)
 
@@ -97,24 +89,23 @@ def predict(file_path):
     # =========================
     avg_prob = np.mean(probs)
 
-    # decision logic (soft boundary)
-    if avg_prob > 0.55:
+    # decision boundary (slightly soft for real audio)
+    if avg_prob >= 0.52:
         label = "MALE"
-    elif avg_prob < 0.45:
+    elif avg_prob <= 0.48:
         label = "FEMALE"
     else:
         label = "UNCERTAIN"
 
-    # confidence (proper scaling)
-    confidence = abs(avg_prob - 0.5) * 2
-    confidence = min(confidence, 1.0)
+    # confidence (stable version)
+    confidence = max(avg_prob, 1 - avg_prob)
 
     return label, confidence
 
 # =========================
 # STREAMLIT UI
 # =========================
-st.title("🎤 Voice Gender Classification (Fixed Version)")
+st.title("🎤 Voice Gender Classification (Stable Version)")
 
 uploaded_file = st.file_uploader("Upload WAV file", type=["wav"])
 
