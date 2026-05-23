@@ -5,10 +5,12 @@ os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
 import streamlit as st
 import numpy as np
 import tensorflow as tf
+from pydub import AudioSegment
+from collections import Counter
 import librosa
 
 # =========================
-# SETTINGS (MUST MATCH TRAINING)
+# SETTINGS (MUST MATCH COLAB)
 # =========================
 SR = 16000
 MAX_LEN = 130
@@ -26,7 +28,7 @@ def load_model_safe():
 model = load_model_safe()
 
 # =========================
-# FEATURE EXTRACTION (EXACT COPY FROM COLAB)
+# FEATURE EXTRACTION (EXACT COPY)
 # =========================
 def extract_features(file_path):
 
@@ -38,14 +40,12 @@ def extract_features(file_path):
 
     features = np.vstack([mfcc, delta, delta2])  # (39, T)
 
-    # FIX TIME LENGTH (130)
     if features.shape[1] < MAX_LEN:
         pad = MAX_LEN - features.shape[1]
         features = np.pad(features, ((0,0),(0,pad)))
     else:
         features = features[:, :MAX_LEN]
 
-    # NORMALIZATION (EXACT TRAIN MATCH)
     features = (features - np.mean(features, axis=1, keepdims=True)) / (
         np.std(features, axis=1, keepdims=True) + EPS
     )
@@ -53,38 +53,51 @@ def extract_features(file_path):
     return features.astype(np.float32)
 
 # =========================
-# PREDICTION (NO CHUNKING — FIXES 0.5 PROBLEM)
+# PREDICTION (IDENTICAL TO COLAB LOGIC)
 # =========================
 def predict(file_path):
 
-    feat = extract_features(file_path)
+    audio = AudioSegment.from_wav(file_path)
 
-    feat = feat[np.newaxis, ..., np.newaxis]  # (1,39,130,1)
+    predictions = []
 
-    prob = float(model.predict(feat, verbose=0)[0][0])
+    for i in range(0, len(audio), 3000):
 
-    # FINAL DECISION (CALIBRATED BUT SIMPLE)
-    if prob >= 0.52:
-        label = "MALE"
-    elif prob <= 0.48:
-        label = "FEMALE"
-    else:
-        label = "UNCERTAIN"
+        chunk = audio[i:i+3000]
 
-    confidence = max(prob, 1 - prob)
+        # SAME SILENCE FILTER AS COLAB
+        if chunk.dBFS == float("-inf") or chunk.dBFS < -40:
+            continue
 
-    return label, confidence
+        chunk.export("temp.wav", format="wav")
+
+        feat = extract_features("temp.wav")
+        feat = feat[np.newaxis, ..., np.newaxis]
+
+        prob = float(model.predict(feat, verbose=0)[0][0])
+
+        label = "MALE" if prob > 0.5 else "FEMALE"
+        predictions.append(label)
+
+    if len(predictions) == 0:
+        return None, 0
+
+    # MAJORITY VOTING (SAME AS COLAB)
+    final_label = Counter(predictions).most_common(1)[0][0]
+    confidence = Counter(predictions)[final_label] / len(predictions)
+
+    return final_label, confidence
 
 # =========================
 # STREAMLIT UI
 # =========================
-st.title("🎤 Voice Gender Classification (Fixed 39 MFCC Model)")
+st.title("🎤 Voice Gender Classification (Matched with Colab)")
 
 uploaded_file = st.file_uploader("Upload WAV file", type=["wav"])
 
 if uploaded_file is not None:
 
-    file_path = "temp.wav"
+    file_path = "temp_uploaded.wav"
 
     with open(file_path, "wb") as f:
         f.write(uploaded_file.read())
@@ -96,7 +109,7 @@ if uploaded_file is not None:
         label, conf = predict(file_path)
 
         if label is None:
-            st.warning("No valid audio detected")
+            st.warning("No speech detected")
         else:
-            st.success(f"Prediction: {label}")
-            st.info(f"Confidence: {conf:.3f}")
+            st.success(f"🎯 Prediction: {label}")
+            st.info(f"📊 Confidence: {conf:.3f}")
