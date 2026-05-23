@@ -6,7 +6,6 @@ import numpy as np
 import tensorflow as tf
 from pydub import AudioSegment
 import librosa
-from collections import defaultdict
 
 # =========================
 # CONFIG
@@ -40,86 +39,71 @@ def extract_features(file_path):
 
     features = np.vstack([mfcc, delta, delta2])  # (39, T)
 
+    # pad / trim
     if features.shape[1] < MAX_LEN:
         pad = MAX_LEN - features.shape[1]
         features = np.pad(features, ((0,0),(0,pad)))
     else:
         features = features[:, :MAX_LEN]
 
-    features = (features - np.mean(features, axis=1, keepdims=True)) / (
-        np.std(features, axis=1, keepdims=True) + EPS
-    )
+    # normalization (same as training)
+    features = features / (np.max(np.abs(features), axis=1, keepdims=True) + EPS)
 
     return features.astype(np.float32)
 
 # =========================
-# CLEAN CHUNK FILTER (IMPORTANT FIX)
-# =========================
-def is_valid_chunk(chunk):
-    return (
-        chunk.dBFS != float("-inf") and
-        chunk.dBFS > -50   # stricter than before
-    )
-
-# =========================
-# PREDICTION ENGINE (FIXED)
+# CLEAN PREDICTION (FIXED LOGIC)
 # =========================
 def predict(file_path):
 
     audio = AudioSegment.from_wav(file_path)
 
-    male_score = 0.0
-    female_score = 0.0
-    valid_chunks = 0
+    probs = []
 
-    debug_probs = []
-
+    # IMPORTANT: keep SAME chunk size as training
     for i in range(0, len(audio), 3000):
 
         chunk = audio[i:i+3000]
 
-        if not is_valid_chunk(chunk):
+        # skip silence
+        if chunk.dBFS == float("-inf") or chunk.dBFS < -55:
             continue
 
         chunk.export("temp.wav", format="wav")
 
         feat = extract_features("temp.wav")
+
         feat = feat[np.newaxis, ..., np.newaxis]
 
         prob = float(model.predict(feat, verbose=0)[0][0])
 
-        debug_probs.append(prob)
-        valid_chunks += 1
+        # DEBUG VIEW (optional)
+        st.write("Chunk prob:", prob)
 
-        # weighted voting (IMPORTANT FIX)
-        male_score += prob
-        female_score += (1 - prob)
+        probs.append(prob)
 
-        st.write(f"Chunk prob: {prob:.4f}")
-
-    if valid_chunks == 0:
+    if len(probs) == 0:
         return None, 0
 
     # =========================
-    # FINAL DECISION (ROBUST)
+    # STABLE AGGREGATION
     # =========================
-    if male_score > female_score:
-        label = "MALE"
-        confidence = male_score / (male_score + female_score)
-    else:
-        label = "FEMALE"
-        confidence = female_score / (male_score + female_score)
+    probs = np.array(probs)
 
-    st.write("Average prob:", np.mean(debug_probs))
-    st.write("Male score:", male_score)
-    st.write("Female score:", female_score)
+    avg_prob = np.median(probs)   # IMPORTANT: median is more stable than mean
+
+    label = "MALE" if avg_prob > 0.5 else "FEMALE"
+
+    # confidence = distance from 0.5 (fixes fake 0.5 confidence)
+    confidence = abs(avg_prob - 0.5) * 2
+    confidence = min(max(confidence, 0), 1)
 
     return label, confidence
 
 # =========================
 # STREAMLIT UI
 # =========================
-st.title("🎤 Gender Classification (CNN - Production)")
+st.title("🎤 Voice Gender Classification (CNN - FIXED)")
 
 uploaded_file = st.file_uploader("Upload WAV file", type=["wav"])
 
