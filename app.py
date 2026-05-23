@@ -6,18 +6,17 @@ import numpy as np
 import tensorflow as tf
 from pydub import AudioSegment
 import librosa
-import tempfile
-
-AudioSegment.converter = "ffmpeg"
+from collections import defaultdict
 
 # =========================
-# CONSTANTS (MUST MATCH COLAB)
+# CONFIG
 # =========================
 SR = 16000
 MAX_LEN = 130
 EPS = 1e-8
-
 MODEL_PATH = "cnn_gender_model.keras"
+
+AudioSegment.converter = "ffmpeg"
 
 # =========================
 # LOAD MODEL
@@ -29,9 +28,11 @@ def load_model():
 model = load_model()
 
 # =========================
-# FEATURE EXTRACTION (IDENTICAL TO COLAB)
+# FEATURE EXTRACTION (SAME AS COLAB)
 # =========================
-def extract_features(y, sr):
+def extract_features(file_path):
+
+    y, sr = librosa.load(file_path, sr=SR)
 
     mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
     delta = librosa.feature.delta(mfcc)
@@ -39,91 +40,102 @@ def extract_features(y, sr):
 
     features = np.vstack([mfcc, delta, delta2])  # (39, T)
 
-    # pad / trim
     if features.shape[1] < MAX_LEN:
-        features = np.pad(features, ((0,0),(0, MAX_LEN - features.shape[1])))
+        pad = MAX_LEN - features.shape[1]
+        features = np.pad(features, ((0,0),(0,pad)))
     else:
         features = features[:, :MAX_LEN]
 
-    # normalize
     features = (features - np.mean(features, axis=1, keepdims=True)) / (
         np.std(features, axis=1, keepdims=True) + EPS
     )
 
     return features.astype(np.float32)
 
+# =========================
+# CLEAN CHUNK FILTER (IMPORTANT FIX)
+# =========================
+def is_valid_chunk(chunk):
+    return (
+        chunk.dBFS != float("-inf") and
+        chunk.dBFS > -50   # stricter than before
+    )
 
 # =========================
-# CLEAN AUDIO SEGMENTATION (IMPORTANT FIX)
-# =========================
-def get_speech_segments(y, sr):
-    intervals = librosa.effects.split(y, top_db=25)
-    return [(y[start:end]) for start, end in intervals]
-
-
-# =========================
-# PREDICTION (FIXED VERSION)
+# PREDICTION ENGINE (FIXED)
 # =========================
 def predict(file_path):
 
-    y, sr = librosa.load(file_path, sr=SR)
+    audio = AudioSegment.from_wav(file_path)
 
-    segments = get_speech_segments(y, sr)
+    male_score = 0.0
+    female_score = 0.0
+    valid_chunks = 0
 
-    probs = []
+    debug_probs = []
 
-    if len(segments) == 0:
-        return None, 0
+    for i in range(0, len(audio), 3000):
 
-    for seg in segments:
+        chunk = audio[i:i+3000]
 
-        if len(seg) < SR // 2:
+        if not is_valid_chunk(chunk):
             continue
 
-        feat = extract_features(seg, sr)
+        chunk.export("temp.wav", format="wav")
+
+        feat = extract_features("temp.wav")
         feat = feat[np.newaxis, ..., np.newaxis]
 
         prob = float(model.predict(feat, verbose=0)[0][0])
 
-        probs.append(prob)
+        debug_probs.append(prob)
+        valid_chunks += 1
 
-        # 🔍 DEBUG OUTPUT (YOU ASKED FOR THIS)
-        st.write("Chunk prob:", prob)
+        # weighted voting (IMPORTANT FIX)
+        male_score += prob
+        female_score += (1 - prob)
 
-    if len(probs) == 0:
+        st.write(f"Chunk prob: {prob:.4f}")
+
+    if valid_chunks == 0:
         return None, 0
 
-    avg_prob = np.mean(probs)
+    # =========================
+    # FINAL DECISION (ROBUST)
+    # =========================
+    if male_score > female_score:
+        label = "MALE"
+        confidence = male_score / (male_score + female_score)
+    else:
+        label = "FEMALE"
+        confidence = female_score / (male_score + female_score)
 
-    label = "MALE" if avg_prob > 0.5 else "FEMALE"
-    confidence = max(avg_prob, 1 - avg_prob)
-
-    st.write("Average prob:", avg_prob)
+    st.write("Average prob:", np.mean(debug_probs))
+    st.write("Male score:", male_score)
+    st.write("Female score:", female_score)
 
     return label, confidence
-
 
 # =========================
 # STREAMLIT UI
 # =========================
-st.title("🎤 Voice Gender Classification (FIXED CNN)")
+st.title("🎤 Gender Classification (CNN - Production)")
 
 uploaded_file = st.file_uploader("Upload WAV file", type=["wav"])
 
 if uploaded_file is not None:
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
-        tmp.write(uploaded_file.read())
-        temp_path = tmp.name
+    with open("temp_uploaded.wav", "wb") as f:
+        f.write(uploaded_file.read())
 
     st.audio(uploaded_file)
 
     if st.button("Predict Gender"):
 
-        label, conf = predict(temp_path)
+        label, conf = predict("temp_uploaded.wav")
 
         if label is None:
-            st.warning("⚠️ No speech detected")
+            st.warning("No speech detected")
         else:
             st.success(f"Prediction: {label}")
             st.info(f"Confidence: {conf:.3f}")
