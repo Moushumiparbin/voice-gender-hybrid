@@ -6,16 +6,17 @@ import numpy as np
 import tensorflow as tf
 from pydub import AudioSegment
 import librosa
-from collections import Counter
+import tempfile
 
 AudioSegment.converter = "ffmpeg"
 
 # =========================
-# CONSTANTS (SAME AS TRAINING)
+# CONSTANTS (MUST MATCH COLAB)
 # =========================
 SR = 16000
 MAX_LEN = 130
 EPS = 1e-8
+
 MODEL_PATH = "cnn_gender_model.keras"
 
 # =========================
@@ -28,95 +29,101 @@ def load_model():
 model = load_model()
 
 # =========================
-# EXACT FEATURE EXTRACTION (DO NOT CHANGE)
+# FEATURE EXTRACTION (IDENTICAL TO COLAB)
 # =========================
-def extract_features(file_path):
-
-    y, sr = librosa.load(file_path, sr=SR)
+def extract_features(y, sr):
 
     mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
     delta = librosa.feature.delta(mfcc)
     delta2 = librosa.feature.delta(mfcc, order=2)
 
-    features = np.vstack([mfcc, delta, delta2])
+    features = np.vstack([mfcc, delta, delta2])  # (39, T)
 
+    # pad / trim
     if features.shape[1] < MAX_LEN:
-        features = np.pad(features, ((0,0),(0,MAX_LEN - features.shape[1])))
+        features = np.pad(features, ((0,0),(0, MAX_LEN - features.shape[1])))
     else:
         features = features[:, :MAX_LEN]
 
-    # SAME NORMALIZATION AS TRAINING
+    # normalize
     features = (features - np.mean(features, axis=1, keepdims=True)) / (
         np.std(features, axis=1, keepdims=True) + EPS
     )
 
     return features.astype(np.float32)
 
+
 # =========================
-# FIXED PREDICTION LOGIC
+# CLEAN AUDIO SEGMENTATION (IMPORTANT FIX)
+# =========================
+def get_speech_segments(y, sr):
+    intervals = librosa.effects.split(y, top_db=25)
+    return [(y[start:end]) for start, end in intervals]
+
+
+# =========================
+# PREDICTION (FIXED VERSION)
 # =========================
 def predict(file_path):
 
-    audio = AudioSegment.from_wav(file_path)
+    y, sr = librosa.load(file_path, sr=SR)
+
+    segments = get_speech_segments(y, sr)
 
     probs = []
 
-    for i in range(0, len(audio), 3000):
+    if len(segments) == 0:
+        return None, 0
 
-        chunk = audio[i:i+3000]
+    for seg in segments:
 
-        # ⚠️ IMPORTANT FIX: DON'T OVER-FILTER SILENCE
-        if chunk.dBFS == float("-inf"):
+        if len(seg) < SR // 2:
             continue
 
-        chunk.export("temp.wav", format="wav")
-
-        feat = extract_features("temp.wav")
+        feat = extract_features(seg, sr)
         feat = feat[np.newaxis, ..., np.newaxis]
 
         prob = float(model.predict(feat, verbose=0)[0][0])
 
-        # DEBUG (IMPORTANT)
-        st.write("Chunk prob:", prob)
-
         probs.append(prob)
+
+        # 🔍 DEBUG OUTPUT (YOU ASKED FOR THIS)
+        st.write("Chunk prob:", prob)
 
     if len(probs) == 0:
         return None, 0
 
-    # =========================
-    # STABLE AGGREGATION (IMPORTANT FIX)
-    # =========================
     avg_prob = np.mean(probs)
-    std_prob = np.std(probs)
-
-    # confidence = how stable model is
-    confidence = 1 - min(std_prob * 4, 1)
 
     label = "MALE" if avg_prob > 0.5 else "FEMALE"
+    confidence = max(avg_prob, 1 - avg_prob)
+
+    st.write("Average prob:", avg_prob)
 
     return label, confidence
+
 
 # =========================
 # STREAMLIT UI
 # =========================
-st.title("🎤 Voice Gender Classification (FIXED)")
+st.title("🎤 Voice Gender Classification (FIXED CNN)")
 
 uploaded_file = st.file_uploader("Upload WAV file", type=["wav"])
 
 if uploaded_file is not None:
 
-    with open("temp_uploaded.wav", "wb") as f:
-        f.write(uploaded_file.read())
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+        tmp.write(uploaded_file.read())
+        temp_path = tmp.name
 
     st.audio(uploaded_file)
 
     if st.button("Predict Gender"):
 
-        label, conf = predict("temp_uploaded.wav")
+        label, conf = predict(temp_path)
 
         if label is None:
-            st.warning("No speech detected")
+            st.warning("⚠️ No speech detected")
         else:
             st.success(f"Prediction: {label}")
             st.info(f"Confidence: {conf:.3f}")
