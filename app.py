@@ -6,13 +6,9 @@ import numpy as np
 import tensorflow as tf
 from pydub import AudioSegment
 import librosa
-from collections import Counter
 
 AudioSegment.converter = "ffmpeg"
 
-# =========================
-# CONFIG
-# =========================
 SR = 16000
 MAX_LEN = 130
 EPS = 1e-8
@@ -27,32 +23,29 @@ def load_model():
 
 model = load_model()
 
-st.title("🎤 Voice Gender Classification (Stable Demo Version)")
-
-uploaded_file = st.file_uploader("Upload WAV file", type=["wav"])
+st.title("🎤 Voice Gender Classification (FINAL STABLE VERSION)")
 
 
 # =========================
-# FEATURE EXTRACTION (STABLE)
+# FEATURE EXTRACTION (LOCKED)
 # =========================
 def extract_features(file_path):
 
     y, sr = librosa.load(file_path, sr=SR)
 
+    # normalize audio FIRST (important fix)
+    y = y / (np.max(np.abs(y)) + 1e-8)
+
     mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
     delta = librosa.feature.delta(mfcc)
     delta2 = librosa.feature.delta(mfcc, order=2)
 
-    features = np.vstack([mfcc, delta, delta2])  # (39, T)
+    features = np.vstack([mfcc, delta, delta2])
 
-    # FIX LENGTH SAFELY
-    if features.shape[1] < MAX_LEN:
-        pad = MAX_LEN - features.shape[1]
-        features = np.pad(features, ((0,0),(0,pad)))
-    else:
-        features = features[:, :MAX_LEN]
+    # FIX LENGTH
+    features = librosa.util.fix_length(features, size=MAX_LEN, axis=1)
 
-    # GLOBAL NORMALIZATION (IMPORTANT FIX FOR DEPLOYMENT)
+    # GLOBAL NORMALIZATION
     features = (features - np.mean(features)) / (np.std(features) + EPS)
 
     return features.astype(np.float32)
@@ -71,8 +64,8 @@ def predict(file_path):
 
         chunk = audio[i:i+3000]
 
-        # skip silence
-        if chunk.dBFS < -50:
+        # strict silence filter
+        if chunk.dBFS < -45:
             continue
 
         chunk.export("temp.wav", format="wav")
@@ -89,25 +82,27 @@ def predict(file_path):
     if len(probs) == 0:
         return None, 0
 
-    # =========================
-    # STABILITY FIX (IMPORTANT)
-    # =========================
-
     probs = np.array(probs)
 
-    # REMOVE EXTREMES (noise stabilizer)
-    probs = probs[(probs > 0.2) & (probs < 0.8)] if len(probs) > 3 else probs
+    # =========================
+    # FINAL CALIBRATION FIX
+    # =========================
 
-    avg_prob = np.mean(probs)
+    # remove extreme noise
+    probs = probs[(probs > 0.15) & (probs < 0.85)]
 
-    # FINAL DECISION
-    if avg_prob > 0.55:
-        label = "MALE"
-    else:
-        label = "FEMALE"
+    if len(probs) == 0:
+        probs = np.array(probs)
 
-    # confidence (spread-aware)
-    confidence = float(max(avg_prob, 1 - avg_prob))
+    avg_prob = np.median(probs)  # IMPORTANT: median > mean
+
+    # SOFT calibration shift (fix bias)
+    calibrated = (avg_prob - 0.45) / 0.1
+    calibrated = 1 / (1 + np.exp(-calibrated))  # sigmoid rescale
+
+    label = "MALE" if calibrated > 0.5 else "FEMALE"
+
+    confidence = max(calibrated, 1 - calibrated)
 
     return label, confidence
 
@@ -115,6 +110,8 @@ def predict(file_path):
 # =========================
 # UI
 # =========================
+uploaded_file = st.file_uploader("Upload WAV file", type=["wav"])
+
 if uploaded_file is not None:
 
     with open("temp_uploaded.wav", "wb") as f:
