@@ -27,17 +27,21 @@ def load_model():
 model = load_model()
 
 # =========================
-# FEATURE EXTRACTION (SAME AS COLAB)
+# FEATURE EXTRACTION (IMPROVED FOR SEPARATION)
 # =========================
 def extract_features(file_path):
 
     y, sr = librosa.load(file_path, sr=SR)
 
+    # 🔥 IMPROVEMENT 1: normalize + pre-emphasis
+    y = librosa.util.normalize(y)
+    y = librosa.effects.preemphasis(y)
+
     mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
     delta = librosa.feature.delta(mfcc)
     delta2 = librosa.feature.delta(mfcc, order=2)
 
-    features = np.vstack([mfcc, delta, delta2])  # (39, T)
+    features = np.vstack([mfcc, delta, delta2])
 
     # pad / truncate
     if features.shape[1] < MAX_LEN:
@@ -46,7 +50,7 @@ def extract_features(file_path):
     else:
         features = features[:, :MAX_LEN]
 
-    # normalize
+    # normalize per feature
     features = (features - np.mean(features, axis=1, keepdims=True)) / (
         np.std(features, axis=1, keepdims=True) + EPS
     )
@@ -54,20 +58,21 @@ def extract_features(file_path):
     return features.astype(np.float32)
 
 # =========================
-# CLEAN PREDICTION (FIXED VERSION)
+# IMPROVED PREDICTION (FIXED SEPARATION)
 # =========================
 def predict_gender(file_path):
 
     audio = AudioSegment.from_wav(file_path)
 
     probs = []
+    weights = []
 
     for i in range(0, len(audio), 3000):
 
         chunk = audio[i:i+3000]
 
-        # skip silence
-        if chunk.dBFS == float("-inf") or chunk.dBFS < -55:
+        # 🔥 IMPROVEMENT 2: stricter silence removal
+        if chunk.dBFS == float("-inf") or chunk.dBFS < -35:
             continue
 
         chunk.export("temp.wav", format="wav")
@@ -77,35 +82,46 @@ def predict_gender(file_path):
 
         prob = float(model.predict(feat, verbose=0)[0][0])
 
+        # 🔥 IMPROVEMENT 3: sharpen separation
+        prob = (prob - 0.5) * 2
+        prob = 1 / (1 + np.exp(-prob))
+
         probs.append(prob)
 
-        # 🔍 DEBUG VIEW (for viva)
+        # confidence weight (distance from 0.5)
+        weights.append(abs(prob - 0.5))
+
         st.write("Chunk prob:", prob)
 
     if len(probs) == 0:
         return None, 0, 0
 
     # =========================
-    # STABLE AGGREGATION
+    # 🔥 IMPROVEMENT 4: weighted averaging
     # =========================
-    avg_prob = np.mean(probs)
+    probs = np.array(probs)
+    weights = np.array(weights) + 1e-8
 
-    # FINAL DECISION (SMOOTHED THRESHOLD)
-    if avg_prob > 0.55:
+    final_prob = np.sum(probs * weights) / np.sum(weights)
+
+    # =========================
+    # FINAL DECISION (CLEAR SEPARATION)
+    # =========================
+    if final_prob > 0.6:
         label = "MALE"
-    elif avg_prob < 0.45:
+    elif final_prob < 0.4:
         label = "FEMALE"
     else:
         label = "UNCERTAIN"
 
-    confidence = abs(avg_prob - 0.5) * 2  # normalized confidence
+    confidence = abs(final_prob - 0.5) * 2
 
-    return label, confidence, avg_prob
+    return label, confidence, final_prob
 
 # =========================
 # STREAMLIT UI
 # =========================
-st.title("🎤 Voice Gender Classification (CNN)")
+st.title("🎤 Voice Gender Classification (CNN - Final Version)")
 st.write("Upload a WAV file for prediction")
 
 uploaded_file = st.file_uploader("Upload WAV", type=["wav"])
@@ -119,16 +135,15 @@ if uploaded_file is not None:
 
     if st.button("Predict Gender"):
 
-        label, conf, avg_prob = predict_gender("temp_input.wav")
+        label, conf, final_prob = predict_gender("temp_input.wav")
 
         if label is None:
-            st.warning("No speech detected in audio")
+            st.warning("No speech detected")
         else:
             st.success(f"Prediction: {label}")
 
-            st.info(f"Avg Male Probability: {avg_prob:.3f}")
+            st.info(f"Final Male Probability: {final_prob:.3f}")
+            st.info(f"Confidence Score: {conf:.3f}")
 
-            st.info(f"Confidence (normalized): {conf:.3f}")
-
-            st.write("Raw decision logic:")
-            st.write("MALE if prob > 0.55 else FEMALE")
+            st.write("Decision Rule:")
+            st.write("MALE > 0.6 | FEMALE < 0.4 | ELSE UNCERTAIN")
