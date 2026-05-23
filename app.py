@@ -6,16 +6,16 @@ import numpy as np
 import tensorflow as tf
 from pydub import AudioSegment
 import librosa
+from collections import Counter
 
 AudioSegment.converter = "ffmpeg"
 
 # =========================
-# CONSTANTS (MUST MATCH COLAB)
+# CONSTANTS (MUST MATCH TRAINING)
 # =========================
 SR = 16000
 MAX_LEN = 130
 EPS = 1e-8
-
 MODEL_PATH = "cnn_gender_model.keras"
 
 # =========================
@@ -46,6 +46,7 @@ def extract_features(file_path):
     else:
         features = features[:, :MAX_LEN]
 
+    # normalization (same as training)
     features = (features - np.mean(features, axis=1, keepdims=True)) / (
         np.std(features, axis=1, keepdims=True) + EPS
     )
@@ -53,19 +54,20 @@ def extract_features(file_path):
     return features.astype(np.float32)
 
 # =========================
-# PREDICTION (FIXED - SAME AS COLAB)
+# STABLE PREDICTION LOGIC (MATCH COLAB CNN TESTING STYLE)
 # =========================
 def predict(file_path):
 
     audio = AudioSegment.from_wav(file_path)
 
-    probs = []   # store probabilities (IMPORTANT FIX)
+    probs = []
 
     for i in range(0, len(audio), 3000):
 
         chunk = audio[i:i+3000]
 
-        if chunk.dBFS == float("-inf") or chunk.dBFS < -55:
+        # SAME SILENCE FILTER AS TRAINING
+        if chunk.dBFS == float("-inf") or chunk.dBFS < -40:
             continue
 
         chunk.export("temp.wav", format="wav")
@@ -79,22 +81,31 @@ def predict(file_path):
     if len(probs) == 0:
         return None, 0
 
+    probs = np.array(probs)
+
     # =========================
-    # SAME LOGIC AS COLAB
+    # 🔥 IMPORTANT FIX: REMOVE NOISE CHUNKS
     # =========================
-    avg_prob = np.mean(probs)
+    probs = probs[(probs > 0.15) & (probs < 0.85)]
+
+    if len(probs) == 0:
+        probs = np.array(probs)
+
+    # =========================
+    # STABLE AGGREGATION (KEY FIX)
+    # =========================
+    avg_prob = np.median(probs)
 
     label = "MALE" if avg_prob > 0.5 else "FEMALE"
 
-    # REAL confidence (IMPORTANT FIX)
-    confidence = max(avg_prob, 1 - avg_prob)
+    confidence = float(max(avg_prob, 1 - avg_prob))
 
     return label, confidence
 
 # =========================
 # STREAMLIT UI
 # =========================
-st.title("🎤 Voice Gender Classification (CNN)")
+st.title("🎤 Voice Gender Classification (Stable CNN)")
 
 uploaded_file = st.file_uploader("Upload WAV file", type=["wav"])
 
@@ -110,7 +121,7 @@ if uploaded_file is not None:
         label, conf = predict("temp_uploaded.wav")
 
         if label is None:
-            st.warning("No speech detected")
+            st.warning("No speech detected. Try clearer audio.")
         else:
             st.success(f"Prediction: {label}")
             st.info(f"Confidence: {conf:.3f}")
