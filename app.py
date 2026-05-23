@@ -4,14 +4,14 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 import streamlit as st
 import numpy as np
 import tensorflow as tf
-from pydub import AudioSegment
 import librosa
+from pydub import AudioSegment
 from collections import Counter
 
 AudioSegment.converter = "ffmpeg"
 
 # =========================
-# CONSTANTS (MUST MATCH TRAINING)
+# CONSTANTS (MUST MATCH COLAB)
 # =========================
 SR = 16000
 MAX_LEN = 130
@@ -28,7 +28,7 @@ def load_model():
 model = load_model()
 
 # =========================
-# FEATURE EXTRACTION (EXACT COPY FROM COLAB)
+# FEATURE EXTRACTION (EXACT SAME AS COLAB)
 # =========================
 def extract_features(file_path):
 
@@ -40,13 +40,14 @@ def extract_features(file_path):
 
     features = np.vstack([mfcc, delta, delta2])  # (39, T)
 
+    # pad / truncate
     if features.shape[1] < MAX_LEN:
         pad = MAX_LEN - features.shape[1]
         features = np.pad(features, ((0,0),(0,pad)))
     else:
         features = features[:, :MAX_LEN]
 
-    # IMPORTANT normalization (same as training)
+    # normalize (same as training)
     features = (features - np.mean(features, axis=1, keepdims=True)) / (
         np.std(features, axis=1, keepdims=True) + EPS
     )
@@ -54,7 +55,7 @@ def extract_features(file_path):
     return features.astype(np.float32)
 
 # =========================
-# PREDICTION (IDENTICAL TO COLAB)
+# PREDICTION (MATCHES COLAB EXACTLY)
 # =========================
 def predict(file_path):
 
@@ -66,7 +67,7 @@ def predict(file_path):
 
         chunk = audio[i:i+3000]
 
-        # silence filter (same as notebook)
+        # SAME SILENCE FILTER AS COLAB
         if chunk.dBFS == float("-inf") or chunk.dBFS < -55:
             continue
 
@@ -77,14 +78,13 @@ def predict(file_path):
 
         prob = model.predict(feat, verbose=0)[0][0]
 
-        # SAME DECISION RULE AS COLAB
         label = "MALE" if prob > 0.5 else "FEMALE"
         predictions.append(label)
 
     if len(predictions) == 0:
         return None, 0
 
-    # MAJORITY VOTING (IMPORTANT FIX)
+    # SAME MAJORITY VOTING AS COLAB
     final_label = Counter(predictions).most_common(1)[0][0]
     confidence = Counter(predictions)[final_label] / len(predictions)
 
@@ -99,17 +99,19 @@ uploaded_file = st.file_uploader("Upload WAV file", type=["wav"])
 
 if uploaded_file is not None:
 
-    with open("temp_uploaded.wav", "wb") as f:
+    file_path = "temp_uploaded.wav"
+
+    with open(file_path, "wb") as f:
         f.write(uploaded_file.read())
 
     st.audio(uploaded_file)
 
     if st.button("Predict Gender"):
 
-        label, conf = predict("temp_uploaded.wav")
+        label, conf = predict(file_path)
 
         if label is None:
-            st.warning("No speech detected")
+            st.warning("⚠️ No speech detected in audio")
         else:
             st.success(f"Prediction: {label}")
             st.info(f"Confidence: {conf:.3f}")
