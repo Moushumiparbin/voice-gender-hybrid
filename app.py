@@ -14,6 +14,7 @@ MAX_LEN = 130
 EPS = 1e-8
 MODEL_PATH = "cnn_gender_model.keras"
 
+
 # =========================
 # LOAD MODEL
 # =========================
@@ -27,11 +28,14 @@ st.title("🎤 Voice Gender Classification")
 
 
 # =========================
-# FEATURE EXTRACTION (SAME AS COLAB)
+# FEATURE EXTRACTION (IDENTICAL TO COLAB)
 # =========================
 def extract_features(file_path):
 
     y, sr = librosa.load(file_path, sr=SR)
+
+    # normalize audio
+    y = y / (np.max(np.abs(y)) + 1e-8)
 
     mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
     delta = librosa.feature.delta(mfcc)
@@ -39,12 +43,14 @@ def extract_features(file_path):
 
     features = np.vstack([mfcc, delta, delta2])  # (39, T)
 
+    # FIX LENGTH EXACTLY LIKE TRAINING
     if features.shape[1] < MAX_LEN:
         pad = MAX_LEN - features.shape[1]
         features = np.pad(features, ((0,0),(0,pad)))
     else:
         features = features[:, :MAX_LEN]
 
+    # normalization SAME AS TRAINING
     features = (features - np.mean(features, axis=1, keepdims=True)) / (
         np.std(features, axis=1, keepdims=True) + EPS
     )
@@ -53,7 +59,7 @@ def extract_features(file_path):
 
 
 # =========================
-# CLEAN PREDICTION LOGIC
+# CLEAN PREDICTION
 # =========================
 def predict(file_path):
 
@@ -65,7 +71,7 @@ def predict(file_path):
 
         chunk = audio[i:i+3000]
 
-        # skip silence
+        # skip silence only (safe)
         if chunk.dBFS < -55:
             continue
 
@@ -81,21 +87,14 @@ def predict(file_path):
         return "UNDETECTED"
 
     # =========================
-    # STABLE DECISION (IMPORTANT)
+    # FINAL CORRECT AGGREGATION
     # =========================
-
     probs = np.array(probs)
 
-    # remove extreme unstable chunks
-    probs = probs[(probs > 0.2) & (probs < 0.8)]
+    final_prob = np.mean(probs)
 
-    if len(probs) == 0:
-        probs = np.array(probs)
-
-    avg_prob = np.median(probs)
-
-    # FINAL LABEL ONLY
-    if avg_prob > 0.5:
+    # FINAL DECISION ONLY
+    if final_prob > 0.5:
         return "MALE"
     else:
         return "FEMALE"
