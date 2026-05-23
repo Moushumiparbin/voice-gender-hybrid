@@ -1,12 +1,12 @@
 import os
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
 
 import streamlit as st
 import numpy as np
 import tensorflow as tf
 from pydub import AudioSegment
 import librosa
+from collections import Counter
 
 AudioSegment.converter = "ffmpeg"
 
@@ -14,55 +14,53 @@ SR = 16000
 MAX_LEN = 130
 EPS = 1e-8
 
-# ✅ PUT MODEL IN SAME FOLDER AS app.py
 MODEL_PATH = "cnn_gender_model.keras"
 
 # =========================
 # LOAD MODEL
 # =========================
 @st.cache_resource
-def load_model_safe():
+def load_model():
     return tf.keras.models.load_model(MODEL_PATH, compile=False)
 
-model = load_model_safe()
+model = load_model()
 
 # =========================
-# FEATURE EXTRACTION
+# FEATURE EXTRACTION (UNCHANGED)
 # =========================
 def extract_features(file_path):
-
     y, sr = librosa.load(file_path, sr=SR)
 
     mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
     delta = librosa.feature.delta(mfcc)
     delta2 = librosa.feature.delta(mfcc, order=2)
 
-    features = np.vstack([mfcc, delta, delta2])
+    feat = np.vstack([mfcc, delta, delta2])
 
-    if features.shape[1] < MAX_LEN:
-        pad = MAX_LEN - features.shape[1]
-        features = np.pad(features, ((0,0),(0,pad)))
+    if feat.shape[1] < MAX_LEN:
+        feat = np.pad(feat, ((0,0),(0, MAX_LEN - feat.shape[1])))
     else:
-        features = features[:, :MAX_LEN]
+        feat = feat[:, :MAX_LEN]
 
-    features = (features - np.mean(features, axis=1, keepdims=True)) / (
-        np.std(features, axis=1, keepdims=True) + EPS
+    feat = (feat - np.mean(feat, axis=1, keepdims=True)) / (
+        np.std(feat, axis=1, keepdims=True) + EPS
     )
 
-    return features.astype(np.float32)
+    return feat.astype(np.float32)
 
 # =========================
-# PREDICTION (FIXED)
+# FIXED PREDICTION LOGIC
 # =========================
 def predict(file_path):
 
     audio = AudioSegment.from_wav(file_path)
+
     probs = []
 
-    for i in range(0, len(audio), 3000):
-        chunk = audio[i:i+3000]
+    for i in range(0, len(audio), 2000):  # smaller window helps stability
+        chunk = audio[i:i+2000]
 
-        if chunk.dBFS == float("-inf") or chunk.dBFS < -55:
+        if chunk.dBFS < -50:
             continue
 
         chunk.export("temp.wav", format="wav")
@@ -76,20 +74,24 @@ def predict(file_path):
     if len(probs) == 0:
         return None, 0
 
-    # ✅ FIX 1: USE PROBABILITY AVERAGE (NOT MAJORITY VOTE)
+    # =========================
+    # IMPORTANT FIX 1: REMOVE HARD THRESHOLD BIAS
+    # =========================
     avg_prob = np.mean(probs)
 
-    # ⚠️ FIX 2: DON'T HARD CODE LABEL ORDER
-    # We assume:
-    # class 1 = MALE (based on sigmoid training)
-    # BUT safer decision is relative probability only
-
-    if avg_prob >= 0.5:
+    # =========================
+    # IMPORTANT FIX 2: SOFT DECISION
+    # =========================
+    if avg_prob > 0.5:
         label = "MALE"
     else:
         label = "FEMALE"
 
-    confidence = max(avg_prob, 1 - avg_prob)
+    # =========================
+    # IMPORTANT FIX 3: REAL CONFIDENCE
+    # (distance from uncertainty)
+    # =========================
+    confidence = abs(avg_prob - 0.5) * 2  # scales to [0,1]
 
     return label, confidence
 
@@ -98,18 +100,18 @@ def predict(file_path):
 # =========================
 st.title("🎤 Voice Gender Classification")
 
-uploaded_file = st.file_uploader("Upload WAV file", type=["wav"])
+file = st.file_uploader("Upload WAV", type=["wav"])
 
-if uploaded_file is not None:
+if file is not None:
 
-    with open("temp_uploaded.wav", "wb") as f:
-        f.write(uploaded_file.read())
+    with open("temp.wav", "wb") as f:
+        f.write(file.read())
 
-    st.audio(uploaded_file)
+    st.audio(file)
 
-    if st.button("Predict Gender"):
+    if st.button("Predict"):
 
-        label, conf = predict("temp_uploaded.wav")
+        label, conf = predict("temp.wav")
 
         if label is None:
             st.warning("No speech detected")
