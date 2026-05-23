@@ -6,7 +6,6 @@ import numpy as np
 import tensorflow as tf
 from pydub import AudioSegment
 import librosa
-from collections import Counter
 
 AudioSegment.converter = "ffmpeg"
 
@@ -29,7 +28,7 @@ def load_model():
 model = load_model()
 
 # =========================
-# FEATURE EXTRACTION (IDENTICAL TO COLAB)
+# FEATURE EXTRACTION (IDENTICAL TO TRAINING)
 # =========================
 def extract_features(file_path):
 
@@ -54,13 +53,13 @@ def extract_features(file_path):
     return features.astype(np.float32)
 
 # =========================
-# PREDICTION (SAME AS NOTEBOOK)
+# FIXED PREDICTION LOGIC
 # =========================
 def predict(file_path):
 
     audio = AudioSegment.from_wav(file_path)
 
-    predictions = []
+    probs = []   # ✅ STORE PROBABILITIES (NOT LABELS)
 
     for i in range(0, len(audio), 3000):
 
@@ -74,26 +73,26 @@ def predict(file_path):
         feat = extract_features("temp.wav")
         feat = feat[np.newaxis, ..., np.newaxis]
 
-        prob = model.predict(feat, verbose=0)[0][0]
+        prob = float(model.predict(feat, verbose=0)[0][0])
+        probs.append(prob)
 
-        label = "MALE" if prob > 0.5 else "FEMALE"
-        predictions.append(label)
-
-    if len(predictions) == 0:
+    if len(probs) == 0:
         return None, 0
 
     # =========================
-    # MAJORITY VOTING (IMPORTANT)
+    # FINAL DECISION (CORRECT)
     # =========================
-    final_label = Counter(predictions).most_common(1)[0][0]
-    confidence = Counter(predictions)[final_label] / len(predictions)
+    avg_prob = np.mean(probs)
 
-    return final_label, confidence
+    label = "MALE" if avg_prob > 0.5 else "FEMALE"
+    confidence = max(avg_prob, 1 - avg_prob)
+
+    return label, confidence
 
 # =========================
 # STREAMLIT UI
 # =========================
-st.title("🎤 Voice Gender Classification (CNN)")
+st.title("🎤 Voice Gender Classification (CNN Fixed)")
 
 uploaded_file = st.file_uploader("Upload WAV file", type=["wav"])
 
