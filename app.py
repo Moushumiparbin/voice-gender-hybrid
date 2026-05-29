@@ -1,10 +1,17 @@
+import os
+os.environ["TF_USE_LEGACY_KERAS"] = "1"
+
 import streamlit as st
 import numpy as np
 import librosa
 from pydub import AudioSegment
+
+import tensorflow as tf
 from tensorflow.keras.models import load_model
 
-model = load_model("cnn_gender_model.keras")
+tf.keras.backend.clear_session()
+
+model = load_model("cnn_gender_model.keras", compile=False)
 
 SR = 16000
 CHUNK = 3000
