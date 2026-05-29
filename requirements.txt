@@ -1,9 +1,10 @@
 streamlit
-tensorflow==2.16.1
-numpy==1.26.4
+tensorflow==2.20.0
+numpy
 librosa
 pydub
 soundfile
-protobuf==4.25.3
+scikit-learn
+matplotlib
 h5py
 ffmpeg-python
